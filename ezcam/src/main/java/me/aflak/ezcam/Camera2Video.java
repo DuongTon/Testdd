@@ -1,4 +1,4 @@
-package com.wesley.camera2.fragment;
+package me.aflak.ezcam;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -29,11 +29,6 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 
-import com.wesley.camera2.R;
-import com.wesley.camera2.util.Camera2Listener;
-import com.wesley.camera2.util.CameraUtil;
-import com.wesley.camera2.widget.AutoFitTextureView;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -45,11 +40,12 @@ import java.util.concurrent.TimeUnit;
  * Created by wesley on 2016/03/04.
  */
 @TargetApi(21)
-public abstract class Camera2Fragment extends Fragment implements Camera2Listener {
+public abstract class Camera2Video implements Camera2Listener{
 
-    public static final String TAG = "Camera2Fragment";
+    public static final String TAG = "Camera2Video";
 
-    private AutoFitTextureView mCameraLayout;
+    private Context context;
+    private AutoFitTextureView textureView;
     private CameraDevice mCameraDevice;
     private CameraCaptureSession mPreviewSession;
     private Size mPreviewSize;
@@ -65,6 +61,12 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     private File mCurrentFile;
     private Camera2Listener mCamera2Listener;
     private String mRationaleMessage;
+
+    public Camera2Video(Context context, AutoFitTextureView textureView) {
+        this.context = context;
+        this.textureView = textureView;
+        mRationaleMessage = context.getString(R.string.app_name);
+    }
 
     public abstract int getTextureResource();
 
@@ -87,7 +89,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     }
 
     public void setRationaleMessage(@StringRes int messageResource) {
-        mRationaleMessage = getString(messageResource);
+        mRationaleMessage = context.getString(messageResource);
     }
 
     public void startRecordingVideo() {
@@ -113,35 +115,20 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
         // Stop Recording
         closeCamera();
         if (!kill) {
-            openCamera(mCameraLayout.getWidth(), mCameraLayout.getHeight());
+            openCamera(textureView.getWidth(), textureView.getHeight());
         }
     }
 
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        mRationaleMessage = getString(R.string.camera2_permission_message);
-    }
 
-    @Override
-    public void onViewCreated(View view, Bundle savedInstanceState) {
-        super.onViewCreated(view, savedInstanceState);
-        mCameraLayout = (AutoFitTextureView) view.findViewById(getTextureResource());
-        mCamera2Listener = this;
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
+    public void onResum(){
         startBackgroundThread();
-        if (mCameraLayout.isAvailable()) {
-            openCamera(mCameraLayout.getWidth(), mCameraLayout.getHeight());
+        if (textureView.isAvailable()) {
+            openCamera(textureView.getWidth(), textureView.getHeight());
         } else {
-            mCameraLayout.setSurfaceTextureListener(mSurfaceTextureListener);
+            textureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
     }
 
-    @Override
     public void onPause() {
         if (isRecording) {
             stopRecordingVideo(true);
@@ -153,7 +140,6 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
         if (mCurrentFile != null) {
             mCurrentFile.delete(); // delete empty file
         }
-        super.onPause();
     }
 
     private void startBackgroundThread() {
@@ -174,21 +160,21 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
         }
     }
 
-    protected void requestVideoPermissions() {
-        if (CameraUtil.shouldShowRequestPermissionRationale(this, Camera2PermissionDialog.VIDEO_PERMISSIONS)) {
-            Camera2PermissionDialog.newInstance(this, mRationaleMessage).show(getChildFragmentManager(), Camera2PermissionDialog.FRAGMENT_DIALOG);
+    /*protected void requestVideoPermissions() {
+        if (CameraUtil.shouldShowRequestPermissionRationale(activity, Camera2PermissionDialog.VIDEO_PERMISSIONS)) {
+            Camera2PermissionDialog.newInstance(this, mRationaleMessage).show(((context.ge)), Camera2PermissionDialog.FRAGMENT_DIALOG);
         } else {
             FragmentCompat.requestPermissions(this, Camera2PermissionDialog.VIDEO_PERMISSIONS, Camera2PermissionDialog.REQUEST_VIDEO_PERMISSIONS);
         }
-    }
+    }*/
 
     private void openCamera(int width, int height) {
-        if (!CameraUtil.hasPermissionsGranted(getActivity(), Camera2PermissionDialog.VIDEO_PERMISSIONS)) {
-            requestVideoPermissions();
+        if (!CameraUtil.hasPermissionsGranted((Activity) context, Camera2PermissionDialog.VIDEO_PERMISSIONS)) {
+           // requestVideoPermissions();
             return;
         }
 
-        final Activity activity = getActivity();
+        final Activity activity = (Activity) context;
         if (activity == null || activity.isFinishing()) {
             return;
         }
@@ -215,11 +201,11 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
             mVideoSize = CameraUtil.chooseVideoSize(map.getOutputSizes(MediaRecorder.class));
             mPreviewSize = CameraUtil.chooseVideoSize(map.getOutputSizes(SurfaceTexture.class));
 
-            int orientation = getResources().getConfiguration().orientation;
+            int orientation = context.getResources().getConfiguration().orientation;
             if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                mCameraLayout.setAspectRatio(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+                textureView.setAspectRatio(mPreviewSize.getWidth(), mPreviewSize.getHeight());
             } else {
-                mCameraLayout.setAspectRatio(mPreviewSize.getHeight(), mPreviewSize.getWidth());
+                textureView.setAspectRatio(mPreviewSize.getHeight(), mPreviewSize.getWidth());
             }
 
             int sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
@@ -243,7 +229,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
             mCamera2Listener.onInterruptedException(ie);
             throw new RuntimeException("Interrupted while trying to lock camera opening.");
         } catch (SecurityException se) {
-            requestVideoPermissions();
+            //requestVideoPermissions();
         }
     }
 
@@ -273,7 +259,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     }
 
     private void startPreview() {
-        if (mCameraDevice == null || !mCameraLayout.isAvailable() || mPreviewSize == null) {
+        if (mCameraDevice == null || !textureView.isAvailable() || mPreviewSize == null) {
             return;
         }
         try {
@@ -291,7 +277,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     private List<Surface> getSurfaces() {
         List<Surface> surfaces = new ArrayList<>();
         try {
-            SurfaceTexture texture = mCameraLayout.getSurfaceTexture();
+            SurfaceTexture texture = textureView.getSurfaceTexture();
             assert texture != null;
             texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
             mPreviewBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
@@ -331,8 +317,8 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     }
 
     private void configureTransform(int viewWidth, int viewHeight) {
-        Activity activity = getActivity();
-        if (mCameraLayout == null || mPreviewSize == null || activity == null) {
+        Activity activity = (Activity) context;
+        if (textureView == null || mPreviewSize == null || activity == null) {
             return;
         }
         int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
@@ -350,7 +336,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
             matrix.postScale(scale, scale, centerX, centerY);
             matrix.postRotate(90 * (rotation - 2), centerX, centerY);
         }
-        mCameraLayout.setTransform(matrix);
+        textureView.setTransform(matrix);
     }
 
     protected File getCurrentFile() {
@@ -358,7 +344,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
     }
 
     protected void setUpMediaRecorder() throws IOException {
-        final Activity activity = getActivity();
+        final Activity activity = (Activity) context;
         if (null == activity) {
             return;
         }
@@ -386,8 +372,8 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
             mCameraDevice = camera;
             startPreview();
             mCameraOpenCloseLock.release();
-            if (null != mCameraLayout) {
-                configureTransform(mCameraLayout.getWidth(), mCameraLayout.getHeight());
+            if (null != textureView) {
+                configureTransform(textureView.getWidth(), textureView.getHeight());
             }
         }
 
@@ -403,7 +389,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
             mCameraOpenCloseLock.release();
             camera.close();
             mCameraDevice = null;
-            Activity activity = getActivity();
+            Activity activity = (Activity) context;
             if (null != activity) {
                 activity.finish();
             }
@@ -420,7 +406,7 @@ public abstract class Camera2Fragment extends Fragment implements Camera2Listene
 
         @Override
         public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
-            Activity activity = getActivity();
+            Activity activity = (Activity) context;
             if (null != activity) {
                 mCamera2Listener.onConfigurationFailed();
                 activity.finish();

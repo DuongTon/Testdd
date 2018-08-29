@@ -192,6 +192,10 @@ public class EZCam {
         }
     }
 
+    private void startPreview1(){
+
+    }
+
     /**
      * Open camera to prepare preview
      * @param templateType capture mode e.g. CameraDevice.TEMPLATE_PREVIEW
@@ -263,9 +267,8 @@ public class EZCam {
                 @Override
                 public void onConfigured(@NonNull CameraCaptureSession session) {
                     cameraCaptureSession = session;
-                    if(cameraCallback != null){
-                        cameraCallback.onCameraReady();
-                    }
+                    setCaptureSetting(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY);
+                    startPreview();
                 }
 
                 @Override
@@ -528,10 +531,58 @@ public class EZCam {
 
     }
 
+    public void test() {
+        if (null == cameraDevice ||!textureView.isAvailable()|| null == previewSize) {
+            return;
+        }
+        try {
+            closePreviewSession();
+            setUpMediaRecorder();
+            SurfaceTexture texture = textureView.getSurfaceTexture();
+            assert texture != null;
+            texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
+            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            List<Surface> surfaces = new ArrayList<>();
+
+            // Set up Surface for the camera preview
+            Surface previewSurface = new Surface(texture);
+            surfaces.add(previewSurface);
+            captureRequestBuilder.addTarget(previewSurface);
+
+            // Set up Surface for the MediaRecorder
+            Surface recorderSurface = mediaRecorder.getSurface();
+            surfaces.add(recorderSurface);
+            captureRequestBuilder.addTarget(recorderSurface);
+
+            // Start a capture session
+            // Once the session starts, we can update the UI and start recording
+            cameraDevice.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
+
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession selection) {
+                    cameraCaptureSession = selection;
+                    updatePreview();
+                }
+
+                @Override
+                public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
+                    final Activity activity = (Activity) context;
+                    if (null != activity) {
+                        Toast.makeText(activity, "Failed", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }, backgroundHandler);
+        } catch (CameraAccessException | IOException e) {
+            e.printStackTrace();
+        }
+
+    }
+
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     public void stopRecordingVideo() {
         // UI
+        //stopPreview();
         isRecordingVideo = false;
         // Stop recording
         mediaRecorder.stop();
@@ -544,24 +595,26 @@ public class EZCam {
             Log.d(TAG, "Video saved: " + nextVideoAbsolutePath);
         }
         nextVideoAbsolutePath = null;
-        upDatePreview();
+       // restartPreviewVideo();
+       // test();
+       // startPreview();
+       restartPreview();
     }
 
-    private void upDatePreview() {
+    private void restartPreviewVideo() {
         if (null == cameraDevice || !textureView.isAvailable() || null == previewSize) {
             return;
         }
         try {
-            closePreviewSession();
+            /*closePreviewSession();
             SurfaceTexture texture = textureView.getSurfaceTexture();
             assert texture != null;
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
 
             Surface previewSurface = new Surface(texture);
-            captureRequestBuilder.addTarget(previewSurface);
-
-            cameraDevice.createCaptureSession(Collections.singletonList(previewSurface),
+            captureRequestBuilder.addTarget(previewSurface);*/
+          /*  cameraDevice.createCaptureSession(Collections.singletonList(previewSurface),
                     new CameraCaptureSession.StateCallback() {
 
                         @Override
@@ -577,14 +630,36 @@ public class EZCam {
                                 Toast.makeText(activity, "Failed", Toast.LENGTH_SHORT).show();
                             }
                         }
-                    }, backgroundHandler);
+                    }, backgroundHandler);*/
+
+            Surface surface = new Surface(textureView.getSurfaceTexture());
+
+                /*captureRequestBuilder = cameraDevice.createCaptureRequest(templateType);
+                captureRequestBuilder.addTarget(surface);*/
+
+                captureRequestBuilderImageReader = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+                captureRequestBuilderImageReader.addTarget(imageReader.getSurface());
+
+
+                cameraDevice.createCaptureSession(Arrays.asList(surface, imageReader.getSurface()), new CameraCaptureSession.StateCallback() {
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession session) {
+                    cameraCaptureSession = session;
+                    updatePreview();
+                }
+
+                @Override
+                public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                    notifyError("Could not configure capture session.");
+                }
+            }, backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
     }
 
 
-    private void updatePreview() {
+    public void updatePreview() {
         if (null == cameraDevice) {
             return;
         }
@@ -625,7 +700,8 @@ public class EZCam {
         mediaRecorder.setVideoFrameRate(30);
         mediaRecorder.setVideoSize(videoSize.getWidth(), videoSize.getHeight());
         mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
-       //mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+       //mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);/
+
         int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
         switch (sensorOrientation) {
             case SENSOR_ORIENTATION_DEFAULT_DEGREES:

@@ -15,26 +15,37 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.CamcorderProfile;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
+import android.util.Log;
 import android.util.Size;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
+import android.view.View;
+import android.widget.Chronometer;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 /**
  * Class that simplifies the use of Camera 2 api
@@ -43,8 +54,8 @@ import java.util.Collections;
  * @since 23/02/2017
  */
 
-public class EZCam {
-    private Context context;
+public class EZCam3 {
+   /* private Context context;
     private EZCamCallback cameraCallback;
 
     private SparseArray<String> camerasList;
@@ -62,23 +73,64 @@ public class EZCam {
     private HandlerThread backgroundThread;
     private Handler backgroundHandler;
 
-    public EZCam(Context context) {
+    private TextureView textureView;
+    private boolean mIsRecording = false;
+
+
+
+    ///
+    private CaptureRequest.Builder mCaptureRequestBuilder;
+
+    private ImageButton mRecordImageButton;
+    private ImageButton mStillImageButton;
+    private boolean mIsTimelapse = false;
+
+    private File mVideoFolder;
+    private String mVideoFileName;
+    private File mImageFolder;
+    private String mImageFileName;
+
+
+    private MediaRecorder mMediaRecorder;
+    private Chronometer mChronometer;
+    private int mTotalRotation;
+    private CameraCaptureSession mPreviewCaptureSession;
+    private static SparseIntArray ORIENTATIONS = new SparseIntArray();
+    static {
+        ORIENTATIONS.append(Surface.ROTATION_0, 0);
+        ORIENTATIONS.append(Surface.ROTATION_90, 90);
+        ORIENTATIONS.append(Surface.ROTATION_180, 180);
+        ORIENTATIONS.append(Surface.ROTATION_270, 270);
+    }
+
+    private CameraCaptureSession mRecordCaptureSession;
+
+    private CameraDevice mCameraDevice;
+
+    private HandlerThread mBackgroundHandlerThread;
+    private Handler mBackgroundHandler;
+    private String mCameraId;
+    private Size mPreviewSize;
+    private Size mVideoSize;
+    private Size mImageSize;
+    private ImageReader mImageReader;
+    public EZCam3(Context context) {
         this.context = context;
         this.cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
     }
 
-    /**
+    *//**
      * Set callback to receive camera states
      * @param cameraCallback callback
-     */
+     *//*
     public void setCameraCallback(EZCamCallback cameraCallback) {
         this.cameraCallback = cameraCallback;
     }
 
-    /**
+    *//**
      * Get available cameras
      * @return SparseArray of available cameras ids
-     */
+     *//*
     public SparseArray<String> getCamerasList(){
         camerasList = new SparseArray<>();
         try {
@@ -113,10 +165,10 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * Select the camera you want to open : front, back, external(s)
      * @param id Id of the camera which can be retrieved with getCamerasList().get(CameraCharacteristics.LENS_FACING_BACK)
-     */
+     *//*
     public void selectCamera(String id) {
         if(camerasList == null){
             getCamerasList();
@@ -144,11 +196,11 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * Open camera to prepare preview
      * @param templateType capture mode e.g. CameraDevice.TEMPLATE_PREVIEW
      * @param textureView Surface where preview should be displayed
-     */
+     *//*
     public void open(final int templateType, final TextureView textureView) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             notifyError("You don't have the required permissions.");
@@ -228,16 +280,115 @@ public class EZCam {
         }
     }
 
+
+    private void startPreview() {
+        SurfaceTexture surfaceTexture = textureView.getSurfaceTexture();
+        surfaceTexture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+        Surface previewSurface = new Surface(surfaceTexture);
+
+        try {
+            mCaptureRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            mCaptureRequestBuilder.addTarget(previewSurface);
+
+            mCameraDevice.createCaptureSession(Arrays.asList(previewSurface, mImageReader.getSurface()),
+                    new CameraCaptureSession.StateCallback() {
+                        @Override
+                        public void onConfigured(CameraCaptureSession session) {
+                            *//*Log.d(TAG, "onConfigured: startPreview");*//*
+                            mPreviewCaptureSession = session;
+                            try {
+                                mPreviewCaptureSession.setRepeatingRequest(mCaptureRequestBuilder.build(),
+                                        null, mBackgroundHandler);
+                            } catch (CameraAccessException e) {
+                                e.printStackTrace();
+                            }
+                        }
+
+                        @Override
+                        public void onConfigureFailed(CameraCaptureSession session) {
+                            *//*Log.d(TAG, "onConfigureFailed: startPreview");*//*
+
+                        }
+                    }, null);
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+    }
+    private void startRecord(TextureView textureView) {
+        try {
+            if(mIsRecording) {
+                setupMediaRecorder();
+            } else if(mIsTimelapse) {
+                setupTimelapse();
+            }
+            SurfaceTexture surfaceTexture = textureView.getSurfaceTexture();
+            surfaceTexture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+            Surface previewSurface = new Surface(surfaceTexture);
+            Surface recordSurface = mMediaRecorder.getSurface();
+            mCaptureRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            mCaptureRequestBuilder.addTarget(previewSurface);
+            mCaptureRequestBuilder.addTarget(recordSurface);
+
+            mCameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, mImageReader.getSurface()),
+                    new CameraCaptureSession.StateCallback() {
+                        @Override
+                        public void onConfigured(CameraCaptureSession session) {
+                            mRecordCaptureSession = session;
+                            try {
+                                mRecordCaptureSession.setRepeatingRequest(
+                                        mCaptureRequestBuilder.build(), null, null
+                                );
+                            } catch (CameraAccessException e) {
+                                e.printStackTrace();
+                            }
+                        }
+
+                        @Override
+                        public void onConfigureFailed(CameraCaptureSession session) {
+                        }
+                    }, null);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void setupMediaRecorder() throws IOException {
+        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+        mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        mMediaRecorder.setOutputFile(mVideoFileName);
+        mMediaRecorder.setVideoEncodingBitRate(1000000);
+        mMediaRecorder.setVideoFrameRate(30);
+        mMediaRecorder.setVideoSize(mVideoSize.getWidth(), mVideoSize.getHeight());
+        mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+        mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+        mMediaRecorder.setOrientationHint(mTotalRotation);
+        mMediaRecorder.prepare();
+    }
+
+    private void setupTimelapse() throws IOException {
+        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+        mMediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_TIME_LAPSE_HIGH));
+        mMediaRecorder.setOutputFile(mVideoFileName);
+        mMediaRecorder.setCaptureRate(2);
+        mMediaRecorder.setOrientationHint(mTotalRotation);
+        mMediaRecorder.prepare();
+    }
+
     private void setupPreview(final int templateType, final TextureView outputSurface){
         if(outputSurface.isAvailable()){
-            setupPreview_(templateType, outputSurface);
+            //setupPreview_(templateType, outputSurface);
+            startRecord(textureView);
         }
         else{
             outputSurface.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
                 @Override
                 public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
                     setAspectRatioTextureView(outputSurface, width, height);
-                    setupPreview_(templateType, outputSurface);
+                   // setupPreview_(templateType, outputSurface);
+                    setupCamera(width, height);
+
                 }
 
                 public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {}
@@ -247,11 +398,11 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * Set CaptureRequest parameters for preview e.g. flash, auto-focus, macro mode, etc.
      * @param key e.g. CaptureRequest.CONTROL_EFFECT_MODE
      * @param value e.g. CameraMetadata.CONTROL_EFFECT_MODE_NEGATIVE
-     */
+     *//*
     public<T> void setCaptureSetting(CaptureRequest.Key<T> key, T value){
         if(captureRequestBuilder!=null && captureRequestBuilderImageReader!=null) {
             captureRequestBuilder.set(key, value);
@@ -259,10 +410,10 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * Get characteristic of selected camera e.g. available effects, scene modes, etc.
      * @param key e.g. CameraCharacteristics.CONTROL_AVAILABLE_EFFECTS
-     */
+     *//*
     public<T> T getCharacteristic(CameraCharacteristics.Key<T> key){
         if(cameraCharacteristics!=null) {
             return cameraCharacteristics.get(key);
@@ -315,20 +466,81 @@ public class EZCam {
         mTextureView.setTransform(matrix);
     }
 
-    /**
+    private void setupCamera(int width, int height) {
+        CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+        try {
+            for(String cameraId : cameraManager.getCameraIdList()){
+                CameraCharacteristics cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId);
+                if(cameraCharacteristics.get(CameraCharacteristics.LENS_FACING) ==
+                        CameraCharacteristics.LENS_FACING_FRONT){
+                    continue;
+                }
+                StreamConfigurationMap map = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                int deviceOrientation = ((Activity)context).getWindowManager().getDefaultDisplay().getRotation();
+                mTotalRotation = sensorToDeviceRotation(cameraCharacteristics, deviceOrientation);
+                boolean swapRotation = mTotalRotation == 90 || mTotalRotation == 270;
+                int rotatedWidth = width;
+                int rotatedHeight = height;
+                if(swapRotation) {
+                    rotatedWidth = height;
+                    rotatedHeight = width;
+                }
+                mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class), rotatedWidth, rotatedHeight);
+                mVideoSize = chooseOptimalSize(map.getOutputSizes(MediaRecorder.class), rotatedWidth, rotatedHeight);
+                mImageSize = chooseOptimalSize(map.getOutputSizes(ImageFormat.JPEG), rotatedWidth, rotatedHeight);
+                mImageReader = ImageReader.newInstance(mImageSize.getWidth(), mImageSize.getHeight(), ImageFormat.JPEG, 1);
+              //  mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler);
+                mCameraId = cameraId;
+                return;
+            }
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static int sensorToDeviceRotation(CameraCharacteristics cameraCharacteristics, int deviceOrientation) {
+        int sensorOrienatation = cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+        deviceOrientation = ORIENTATIONS.get(deviceOrientation);
+        return (sensorOrienatation + deviceOrientation + 360) % 360;
+    }
+
+    private static Size chooseOptimalSize(Size[] choices, int width, int height) {
+        List<Size> bigEnough = new ArrayList<Size>();
+        for(Size option : choices) {
+            if(option.getHeight() == option.getWidth() * height / width &&
+                    option.getWidth() >= width && option.getHeight() >= height) {
+                bigEnough.add(option);
+            }
+        }
+        if(bigEnough.size() > 0) {
+            return Collections.min(bigEnough, new CompareSizeByArea());
+        } else {
+            return choices[0];
+        }
+    }
+
+    private void createVideoFolder() {
+        File movieFile = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
+        mVideoFolder = new File(movieFile, "camera2VideoImage");
+        if(!mVideoFolder.exists()) {
+            mVideoFolder.mkdirs();
+        }
+    }
+
+        *//**
      * start the preview, capture request is built at each call here
-     */
-    public void startPreview(){
+     *//*
+    *//*public void startPreview(){
         try {
             cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler);
         } catch (CameraAccessException e) {
             notifyError(e.getMessage());
         }
-    }
+    }*//*
 
-    /**
+    *//**
      * stop the preview
-     */
+     *//*
     public void stopPreview(){
         try {
             cameraCaptureSession.stopRepeating();
@@ -337,25 +549,25 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * shortcut to call stopPreview() then startPreview()
-     */
+     *//*
     public void restartPreview(){
         stopPreview();
         startPreview();
     }
 
-    /**
+    *//**
      * close the camera definitively
-     */
+     *//*
     public void close(){
         cameraDevice.close();
         stopBackgroundThread();
     }
 
-    /**
+    *//**
      * take a picture
-     */
+     *//*
     public void takePicture(){
         captureRequestBuilderImageReader.set(CaptureRequest.JPEG_ORIENTATION, cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION));
         try {
@@ -380,12 +592,12 @@ public class EZCam {
         }
     }
 
-    /**
+    *//**
      * Save image to storage
      * @param image Image object got from onPicture() callback of EZCamCallback
      * @param file File where image is going to be written
      * @return File object pointing to the file uri, null if file already exist
-     */
+     *//*
     public static File saveImage(Image image, File file) throws IOException {
         if(file.exists()) {
             image.close();
@@ -416,5 +628,5 @@ public class EZCam {
         } catch (InterruptedException e) {
             notifyError(e.getMessage());
         }
-    }
+    }*/
 }

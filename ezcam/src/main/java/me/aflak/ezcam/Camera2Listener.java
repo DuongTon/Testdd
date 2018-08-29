@@ -1,4 +1,4 @@
-package com.wesley.camera2.util;
+package me.aflak.ezcam;
 
 import android.hardware.camera2.CameraAccessException;
 

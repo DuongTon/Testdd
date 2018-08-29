@@ -1,4 +1,4 @@
-package com.wesley.camera2.widget;
+package me.aflak.ezcam;
 
 
 import android.content.Context;

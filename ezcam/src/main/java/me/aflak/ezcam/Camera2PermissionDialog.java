@@ -1,4 +1,4 @@
-package com.wesley.camera2.fragment;
+package me.aflak.ezcam;
 
 
 import android.Manifest;

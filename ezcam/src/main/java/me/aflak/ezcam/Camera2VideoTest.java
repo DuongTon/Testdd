@@ -1,4 +1,4 @@
-package mobapptut.com.camera2videoimage;
+package me.aflak.ezcam;
 
 import android.Manifest;
 import android.app.Activity;
@@ -22,13 +22,11 @@ import android.media.ImageReader;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.support.v4.content.ContextCompat;
-import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
@@ -51,7 +49,7 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 
-public class Camera2Video{
+public class Camera2VideoTest {
 
     private static final String TAG = "Camera2VideoImageActivi";
 
@@ -62,6 +60,27 @@ public class Camera2Video{
     private int mCaptureState = STATE_PREVIEW;
     private TextureView mTextureView;
     private Context context;
+
+    public Camera2VideoTest(Context context) {
+        this.context = context;
+    }
+
+    public boolean ismIsTimelapse() {
+        return mIsTimelapse;
+    }
+
+    public boolean ismIsRecording() {
+        return mIsRecording;
+    }
+
+    public void setmIsRecording(boolean mIsRecording) {
+        this.mIsRecording = mIsRecording;
+    }
+
+    public void setmIsTimelapse(boolean mIsTimelapse) {
+        this.mIsTimelapse = mIsTimelapse;
+    }
+
     private TextureView.SurfaceTextureListener mSurfaceTextureListener = new TextureView.SurfaceTextureListener() {
         @Override
         public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
@@ -170,7 +189,7 @@ public class Camera2Video{
         }
     }
     private MediaRecorder mMediaRecorder;
-    private Chronometer mChronometer;
+   // private Chronometer mChronometer;
     private int mTotalRotation;
     private CameraCaptureSession mPreviewCaptureSession;
     private CameraCaptureSession.CaptureCallback mPreviewCaptureCallback = new
@@ -317,7 +336,8 @@ public class Camera2Video{
     }*/
 
 
-    public void Open() {
+    public void openCamera(TextureView textureView) {
+        this.mTextureView = textureView;
         startBackgroundThread();
 
         if(mTextureView.isAvailable()) {
@@ -624,7 +644,7 @@ public class Camera2Video{
         return imageFile;
     }
 
-    private void checkWriteStoragePermission() {
+    public void checkWriteStoragePermission() {
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if(ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     == PackageManager.PERMISSION_GRANTED) {
@@ -636,9 +656,9 @@ public class Camera2Video{
                 if(mIsTimelapse || mIsRecording) {
                     startRecord();
                     mMediaRecorder.start();
-                    mChronometer.setBase(SystemClock.elapsedRealtime());
+                    /*mChronometer.setBase(SystemClock.elapsedRealtime());
                     mChronometer.setVisibility(View.VISIBLE);
-                    mChronometer.start();
+                    mChronometer.start();*/
                 }
             } else {
                 if(((Activity)context).shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
@@ -655,9 +675,9 @@ public class Camera2Video{
             if(mIsRecording || mIsTimelapse) {
                 startRecord();
                 mMediaRecorder.start();
-                mChronometer.setBase(SystemClock.elapsedRealtime());
+               /* mChronometer.setBase(SystemClock.elapsedRealtime());
                 mChronometer.setVisibility(View.VISIBLE);
-                mChronometer.start();
+                mChronometer.start();*/
             }
         }
     }
@@ -685,7 +705,7 @@ public class Camera2Video{
         mMediaRecorder.prepare();
     }
 
-    private void lockFocus() {
+    public void lockFocus() {
         mCaptureState = STATE_WAIT_LOCK;
         mCaptureRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START);
         try {
@@ -696,6 +716,31 @@ public class Camera2Video{
             }
         } catch (CameraAccessException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void startVIDO(){
+        if (mIsRecording || mIsTimelapse) {
+           /* mChronometer.stop();
+            mChronometer.setVisibility(View.INVISIBLE);*/
+            mIsRecording = false;
+            mIsTimelapse = false;
+           /* mRecordImageButton.setImageResource(R.mipmap.btn_video_online);*/
+
+            // Starting the preview prior to stopping recording which should hopefully
+            // resolve issues being seen in Samsung devices.
+            startPreview();
+            mMediaRecorder.stop();
+            mMediaRecorder.reset();
+
+            Intent mediaStoreUpdateIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+            mediaStoreUpdateIntent.setData(Uri.fromFile(new File(mVideoFileName)));
+            context.sendBroadcast(mediaStoreUpdateIntent);
+
+        } else {
+            mIsRecording = true;
+            /*mRecordImageButton.setImageResource(R.mipmap.btn_video_busy);*/
+            checkWriteStoragePermission();
         }
     }
 }

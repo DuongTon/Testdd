@@ -14,4 +14,6 @@ public interface EZCamCallback {
     void onPicture(Image image);
     void onError(String message);
     void onCameraDisconnected();
+
+    void onStopVideo();
 }

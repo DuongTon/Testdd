@@ -53,7 +53,7 @@ import static android.content.ContentValues.TAG;
  * @since 23/02/2017
  */
 
-public class EZCam {
+public class EZCam1 {
     private Context context;
     private EZCamCallback cameraCallback;
 
@@ -104,7 +104,7 @@ public class EZCam {
         return isRecordingVideo;
     }
 
-    public EZCam(Context context) {
+    public EZCam1(Context context) {
         this.context = context;
         this.cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
 
