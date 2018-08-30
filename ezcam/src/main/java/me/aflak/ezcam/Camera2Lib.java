@@ -2,8 +2,13 @@ package me.aflak.ezcam;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.RectF;
@@ -19,11 +24,16 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaRecorder;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.provider.Settings;
+import android.provider.SyncStateContract;
 import android.support.annotation.NonNull;
+import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseArray;
@@ -32,6 +42,7 @@ import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.Toast;
 
 import java.io.File;
@@ -45,7 +56,12 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
+import static android.Manifest.permission.CAMERA;
+import static android.Manifest.permission.READ_EXTERNAL_STORAGE;
+import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
 import static me.aflak.ezcam.CameraUtil.chooseVideoSize;
 
 /**
@@ -55,7 +71,7 @@ import static me.aflak.ezcam.CameraUtil.chooseVideoSize;
  * @since 23/02/2017
  */
 
-public class Camera2Lib {
+public class Camera2Lib implements FragmentCompat.OnRequestPermissionsResultCallback {
     private Context context;
 
     private SparseArray<String> camerasList;
@@ -80,6 +96,7 @@ public class Camera2Lib {
     private Size mVideoSize;
 
     private Integer mSensorOrientation;
+    private static final int REQUEST_CAMERA_PERMISSION_RESULT = 0;
 
     private static final int SENSOR_ORIENTATION_DEFAULT_DEGREES = 90;
     private static final int SENSOR_ORIENTATION_INVERSE_DEGREES = 270;
@@ -90,8 +107,9 @@ public class Camera2Lib {
     private static final int REQUEST_VIDEO_PERMISSIONS = 1;
     private static final String FRAGMENT_DIALOG = "dialog";
 
+    private Semaphore mCameraOpenCloseLock = new Semaphore(1);
     private static final String[] VIDEO_PERMISSIONS = {
-            Manifest.permission.CAMERA,
+            CAMERA,
             Manifest.permission.RECORD_AUDIO,
     };
 
@@ -109,6 +127,8 @@ public class Camera2Lib {
         INVERSE_ORIENTATIONS.append(Surface.ROTATION_270, 0);
     }
 
+    private Size mPreviewSize;
+
     public Camera2Lib(Context context) {
         this.context = context;
         this.cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
@@ -117,19 +137,20 @@ public class Camera2Lib {
 
     /**
      * Get available cameras
+     *
      * @return SparseArray of available cameras ids
      */
-    public SparseArray<String> getCamerasList(){
+    public SparseArray<String> getCamerasList() {
         camerasList = new SparseArray<>();
         try {
             String[] camerasAvailable = cameraManager.getCameraIdList();
             CameraCharacteristics cam;
             Integer characteristic;
-            for (String id : camerasAvailable){
+            for (String id : camerasAvailable) {
                 cam = cameraManager.getCameraCharacteristics(id);
                 characteristic = cam.get(CameraCharacteristics.LENS_FACING);
-                if (characteristic!=null){
-                    switch (characteristic){
+                if (characteristic != null) {
+                    switch (characteristic) {
                         case CameraCharacteristics.LENS_FACING_FRONT:
                             camerasList.put(CameraCharacteristics.LENS_FACING_FRONT, id);
                             break;
@@ -154,26 +175,38 @@ public class Camera2Lib {
 
     /**
      * Select the camera you want to open : front, back, external(s)
+     *
      * @param id Id of the camera which can be retrieved with getCamerasList().get(CameraCharacteristics.LENS_FACING_BACK)
      */
     public void selectCamera(String id) {
-        if(camerasList == null){
+        if (camerasList == null) {
             getCamerasList();
         }
 
-        currentCamera = camerasList.indexOfValue(id)<0?null:id;
-        if(currentCamera == null) {
+        currentCamera = camerasList.indexOfValue(id) < 0 ? null : id;
+        if (currentCamera == null) {
             return;
         }
 
         try {
             cameraCharacteristics = cameraManager.getCameraCharacteristics(currentCamera);
+
+            // video
+            if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
+                throw new RuntimeException("Time out waiting to lock camera opening.");
+            }
+            //
+
             StreamConfigurationMap map = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if(map != null) {
+            if (map != null) {
                 //video
+
                 CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(currentCamera);
                 mVideoSize = chooseVideoSize(map.getOutputSizes(MediaRecorder.class));
                 mSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+               /* mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
+                        textureView.getWidth(), textureView.getHeight(), mVideoSize);*/
                 //
 
                 previewSize = Collections.max(Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)), new CompareSizesByArea());
@@ -181,8 +214,11 @@ public class Camera2Lib {
                 imageReader.setOnImageAvailableListener(onImageAvailable, backgroundHandler);
             }
         } catch (CameraAccessException e) {
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
     }
+
 
     private static Size chooseVideoSize(Size[] choices) {
         for (Size size : choices) {
@@ -193,17 +229,95 @@ public class Camera2Lib {
         return choices[choices.length - 1];
     }
 
-    /**
-     * Open camera to prepare preview
-     * @param templateType capture mode e.g. CameraDevice.TEMPLATE_PREVIEW
-     * @param textureView Surface where preview should be displayed
-     */
-    public void startPreview(final int templateType, final TextureView textureView) {
-        this.textureView = textureView;
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            return;
+    private Size chooseOptimalSize(Size[] choices, int width, int height, Size aspectRatio) {
+        // Collect the supported resolutions that are at least as big as the preview Surface
+        List<Size> bigEnough = new ArrayList<>();
+        int w = aspectRatio.getWidth();
+        int h = aspectRatio.getHeight();
+        for (Size option : choices) {
+            if (option.getHeight() == option.getWidth() * h / w &&
+                    option.getWidth() >= width && option.getHeight() >= height) {
+                bigEnough.add(option);
+            }
         }
 
+        // Pick the smallest of those, assuming we found any
+        if (bigEnough.size() > 0) {
+            return Collections.min(bigEnough, new CompareSizesByArea());
+        } else {
+            Log.e(TAG, "Couldn't find any suitable preview size");
+            return choices[0];
+        }
+    }
+
+    public static final int RequestPermissionCode = 1;
+
+    private void checkPermissions() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            if (!checkAllPermission())
+                requestPermission();
+        }
+    }
+
+    private void requestPermission() {
+        ActivityCompat.requestPermissions((Activity) context, new String[]
+                {
+                        CAMERA,
+                        READ_EXTERNAL_STORAGE,
+                        WRITE_EXTERNAL_STORAGE,
+
+                }, RequestPermissionCode);
+    }
+
+    public boolean checkAllPermission() {
+
+        int FirstPermissionResult = ContextCompat.checkSelfPermission(context.getApplicationContext(), CAMERA);
+        int SecondPermissionResult = ContextCompat.checkSelfPermission(context.getApplicationContext(), READ_EXTERNAL_STORAGE);
+        int ThirdPermissionResult = ContextCompat.checkSelfPermission(context.getApplicationContext(), WRITE_EXTERNAL_STORAGE);
+
+        return FirstPermissionResult == PackageManager.PERMISSION_GRANTED &&
+                SecondPermissionResult == PackageManager.PERMISSION_GRANTED &&
+                ThirdPermissionResult == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        //super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case RequestPermissionCode:
+                if (grantResults.length > 0) {
+
+                    boolean CameraPermission = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+                    boolean ReadExternalStatePermission = grantResults[1] == PackageManager.PERMISSION_GRANTED;
+                    boolean ReadWriteStatePermission = grantResults[2] == PackageManager.PERMISSION_GRANTED;
+
+                    if (CameraPermission && ReadExternalStatePermission && ReadWriteStatePermission) {
+
+                        Toast.makeText(context, "Permissions acquired", Toast.LENGTH_LONG).show();
+                    } else {
+                        Toast.makeText(context, "One or more permissions denied", Toast.LENGTH_LONG).show();
+
+                    }
+                }
+
+
+        }
+    }
+
+
+    /**
+     * Open camera to prepare preview
+     *
+     * @param templateType capture mode e.g. CameraDevice.TEMPLATE_PREVIEW
+     * @param textureView  Surface where preview should be displayed
+     */
+
+    public void startPreview(final int templateType, final TextureView textureView) {
+        this.textureView = textureView;
+        checkPermissions();
+        if (ActivityCompat.checkSelfPermission(context, CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
         startBackgroundThread();
 
         try {
@@ -213,21 +327,35 @@ public class Camera2Lib {
                 public void onOpened(@NonNull CameraDevice camera) {
                     cameraDevice = camera;
                     setupPreview(templateType, textureView);
+
+                    //video
+                    mCameraOpenCloseLock.release();
                 }
 
                 @Override
                 public void onDisconnected(@NonNull CameraDevice camera) {
+                   /* mCameraOpenCloseLock.release();
+                    cameraDevice.close();
+                    cameraDevice = null;*/
                 }
+
 
                 @Override
                 public void onError(@NonNull CameraDevice camera, int error) {
+                    /*mCameraOpenCloseLock.release();
+                    cameraDevice.close();
+                    cameraDevice = null;
+                    Activity activity = (Activity) context;
+                    if (null != activity) {
+                        activity.finish();
+                    }*/
                 }
             }, backgroundHandler);
         } catch (CameraAccessException e) {
         }
     }
 
-    private void setupPreview_(int templateType, TextureView textureView){
+    private void setupPreview_(int templateType, TextureView textureView) {
         Surface surface = new Surface(textureView.getSurfaceTexture());
 
         try {
@@ -247,18 +375,17 @@ public class Camera2Lib {
 
                 @Override
                 public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                   Log.d("TonDuong", "Could not configure capture session.");
+                    Log.d("TonDuong", "Could not configure capture session.");
                 }
             }, backgroundHandler);
         } catch (CameraAccessException e) {
         }
     }
 
-    private void setupPreview(final int templateType, final TextureView outputSurface){
-        if(outputSurface.isAvailable()){
+    private void setupPreview(final int templateType, final TextureView outputSurface) {
+        if (outputSurface.isAvailable()) {
             setupPreview_(templateType, outputSurface);
-        }
-        else{
+        } else {
             outputSurface.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
                 @Override
                 public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
@@ -269,8 +396,13 @@ public class Camera2Lib {
                 public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
                     configureTransform(width, height);
                 }
-                public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {return false;}
-                public void onSurfaceTextureUpdated(SurfaceTexture surface) {}
+
+                public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                    return false;
+                }
+
+                public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+                }
             });
         }
     }
@@ -300,11 +432,12 @@ public class Camera2Lib {
 
     /**
      * Set CaptureRequest parameters for preview e.g. flash, auto-focus, macro mode, etc.
-     * @param key e.g. CaptureRequest.CONTROL_EFFECT_MODE
+     *
+     * @param key   e.g. CaptureRequest.CONTROL_EFFECT_MODE
      * @param value e.g. CameraMetadata.CONTROL_EFFECT_MODE_NEGATIVE
      */
-    public<T> void setCaptureSetting(CaptureRequest.Key<T> key, T value){
-        if(captureRequestBuilder!=null && captureRequestBuilderImageReader!=null) {
+    public <T> void setCaptureSetting(CaptureRequest.Key<T> key, T value) {
+        if (captureRequestBuilder != null && captureRequestBuilderImageReader != null) {
             captureRequestBuilder.set(key, value);
             captureRequestBuilderImageReader.set(key, value);
         }
@@ -312,18 +445,18 @@ public class Camera2Lib {
 
     /**
      * Get characteristic of selected camera e.g. available effects, scene modes, etc.
+     *
      * @param key e.g. CameraCharacteristics.CONTROL_AVAILABLE_EFFECTS
      */
-    public<T> T getCharacteristic(CameraCharacteristics.Key<T> key){
-        if(cameraCharacteristics!=null) {
+    public <T> T getCharacteristic(CameraCharacteristics.Key<T> key) {
+        if (cameraCharacteristics != null) {
             return cameraCharacteristics.get(key);
         }
         return null;
     }
 
-    private void setAspectRatioTextureView(TextureView textureView, int surfaceWidth, int surfaceHeight)
-    {
-        int rotation = ((Activity)context).getWindowManager().getDefaultDisplay().getRotation();
+    private void setAspectRatioTextureView(TextureView textureView, int surfaceWidth, int surfaceHeight) {
+        int rotation = ((Activity) context).getWindowManager().getDefaultDisplay().getRotation();
         int newWidth = surfaceWidth, newHeight = surfaceHeight;
 
         switch (rotation) {
@@ -359,8 +492,7 @@ public class Camera2Lib {
         float centerY = viewRect.centerY();
         if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
             matrix.postRotate(90 * (rotation - 2), centerX, centerY);
-        }
-        else if (Surface.ROTATION_180 == rotation) {
+        } else if (Surface.ROTATION_180 == rotation) {
             matrix.postRotate(180, centerX, centerY);
         }
         mTextureView.setTransform(matrix);
@@ -369,7 +501,7 @@ public class Camera2Lib {
     /**
      * start the preview, capture request is built at each call here
      */
-    public void startPreview(){
+    public void startPreview() {
         try {
             cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler);
         } catch (CameraAccessException e) {
@@ -381,7 +513,7 @@ public class Camera2Lib {
     /**
      * stop the preview
      */
-    public void stopPreview(){
+    public void stopPreview() {
         try {
             cameraCaptureSession.stopRepeating();
         } catch (CameraAccessException e) {
@@ -391,7 +523,7 @@ public class Camera2Lib {
     /**
      * shortcut to call stopPreview() then startPreview()
      */
-    public void restartPreview(){
+    public void restartPreview() {
         stopPreview();
         startPreview();
     }
@@ -399,7 +531,7 @@ public class Camera2Lib {
     /**
      * close the camera definitively
      */
-    public void close(){
+    public void close() {
         cameraDevice.close();
         stopBackgroundThread();
     }
@@ -407,7 +539,7 @@ public class Camera2Lib {
     /**
      * take a picture
      */
-    public void takePicture(){
+    public void takePicture() {
         captureRequestBuilderImageReader.set(CaptureRequest.JPEG_ORIENTATION, cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION));
         try {
             cameraCaptureSession.capture(captureRequestBuilderImageReader.build(), null, backgroundHandler);
@@ -421,7 +553,7 @@ public class Camera2Lib {
             stopPreview();
             try {
                 SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
-                String filename = "image_"+dateFormat.format(new Date())+".jpg";
+                String filename = "image_" + dateFormat.format(new Date()) + ".jpg";
                 File file = new File(context.getFilesDir(), filename);
                 saveImage(imageReader.acquireLatestImage(), file);
                 Toast.makeText(context, "image save " + file.getAbsolutePath(), Toast.LENGTH_SHORT).show();
@@ -435,12 +567,13 @@ public class Camera2Lib {
 
     /**
      * Save image to storage
+     *
      * @param image Image object got from onPicture() callback of EZCamCallback
-     * @param file File where image is going to be written
+     * @param file  File where image is going to be written
      * @return File object pointing to the file uri, null if file already exist
      */
     public static File saveImage(Image image, File file) throws IOException {
-        if(file.exists()) {
+        if (file.exists()) {
             image.close();
             return null;
         }
@@ -502,7 +635,7 @@ public class Camera2Lib {
                 public void onConfigured(@NonNull CameraCaptureSession session) {
                     cameraCaptureSession = session;
                     updatePreview();
-                    ((Activity)context).runOnUiThread(new Runnable() {
+                    ((Activity) context).runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
                             // UI
@@ -583,6 +716,7 @@ public class Camera2Lib {
         return (dir == null ? "" : (dir.getAbsolutePath() + "/"))
                 + System.currentTimeMillis() + ".mp4";
     }
+
     private void closePreviewSession() {
         if (cameraCaptureSession != null) {
             cameraCaptureSession.close();
@@ -605,12 +739,12 @@ public class Camera2Lib {
             Log.d(TAG, "Video saved: " + mNextVideoAbsolutePath);
         }
         mNextVideoAbsolutePath = null;
-        restartPreview();
+       restartPreview();
         //startPreviewVideo();
     }
 
 
-  /*  private void startPreviewVideo() {
+    private void startPreviewVideo() {
         if (null == cameraDevice || !textureView.isAvailable() || null == previewSize) {
             return;
         }
@@ -644,13 +778,15 @@ public class Camera2Lib {
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
-    }*/
+    }
 
-    public void recordingVideo(){
+    public void recordingVideo(ImageView imageView) {
         if (mIsRecordingVideo) {
             stopRecordingVideo();
+            imageView.setColorFilter(Color.WHITE);
         } else {
             startRecordingVideo();
+            imageView.setColorFilter(Color.RED);
         }
     }
 }
